@@ -18,10 +18,6 @@ import (
 	"os"
 )
 
-// Implements the color interface. The output image will be composed of this.
-// Implements the color interface. All three components are expected to be in
-// the range [0.0, 1.0].
-
 // Implements the color interface. Stores the H, S, and L components,
 // respectively. *This will panic if the slice doesn't contain at least 3
 // components.* Values after the first 3 are ignored. Each component is a
@@ -57,27 +53,10 @@ func clamp(v float64) float64 {
 	return v
 }
 
-// Linearly maps a floating point value in [0, 1] to [0, 0xffff]. Clamps the
-// value if it's not in [0, 1].
+// Linearly maps a floating point value in [0, 1] to [0, 0xffff]. Clamps v to
+// be in the range [0, 1].
 func scaleTo16Bit(v float64) uint16 {
 	return uint16(clamp(v) * float64(0xffff))
-}
-
-// This function sets the H value of the given HSLColor. It's written this way,
-// rather than as a method of HSLColor, so that the function can be passed to
-// HSLImage's setComponent method.
-func setH(c HSLColor, value color.Color) {
-	c[0] = scaleTo16Bit(convertToBrightness(value))
-}
-
-// See setH
-func setS(c HSLColor, value color.Color) {
-	c[1] = scaleTo16Bit(convertToBrightness(value))
-}
-
-// See setH
-func setL(c HSLColor, value color.Color) {
-	c[2] = scaleTo16Bit(convertToBrightness(value))
 }
 
 // Returns R, G, B, given a particular hue value.
@@ -104,6 +83,8 @@ func (c HSLColor) RGBA() (r, g, b, a uint32) {
 	return
 }
 
+// Implements the image interface. Internally uses HSL representation for each
+// pixel.
 type HSLImage struct {
 	// We'll keep the HSL pixel data in a single slice to avoid any possible
 	// padding if we use a slice of color structs instead. (This is why
@@ -135,11 +116,12 @@ func (h *HSLImage) At(x, y int) color.Color {
 }
 
 // Takes another image and sets a component of each of this image's pixels
-// based on the brightness of each pixel in pic. The provided "pic" can not be
-// larger than h in either dimension. Requires a "setter" function, which will
-// be called to obtain the updated value of each HSL pixel.
-func (h *HSLImage) SetComponent(pic image.Image,
-	setter func(HSLColor, color.Color)) {
+// based on the brightness of each pixel in pic. The "componentOffset" must be
+// 0 if setting hue, 1 if setting saturation, and 2 if setting luminosity.
+func (h *HSLImage) SetComponent(pic image.Image, componentOffset int) error {
+	if (componentOffset < 0) || (componentOffset > 2) {
+		return fmt.Errorf("Invalid component offset: %d", componentOffset)
+	}
 	bounds := pic.Bounds().Canon()
 	localX := 0
 	localY := 0
@@ -147,14 +129,15 @@ func (h *HSLImage) SetComponent(pic image.Image,
 		localX = 0
 		for x := bounds.Min.X; x < bounds.Max.X; x++ {
 			hslPixel := h.HSLPixel(localX, localY)
-			// Here is where we call the provided "setter" function to update
-			// the components of h.pixels[i]. In practice, setter will always
-			// be setH, setS, or setL.
-			setter(hslPixel, pic.At(x, y))
+			// Convert the new component from the grayscale brightness of the
+			// pixel in the source pic.
+			newValue := scaleTo16Bit(convertToBrightness(pic.At(x, y)))
+			hslPixel[componentOffset] = newValue
 			localX++
 		}
 		localY++
 	}
+	return nil
 }
 
 // "Rotates" the hue value of each pixel in the image forward by the given
@@ -233,17 +216,10 @@ func combineImages(imageFiles []string, adjustHue float64) (image.Image,
 		return nil, fmt.Errorf("Failed creating new image: %s", e)
 	}
 
-	// We'll index into this array to get the setter function for each
-	// component of the HSL color.
-	setterFunctions := []func(HSLColor, color.Color){
-		setH,
-		setS,
-		setL,
-	}
 	componentNames := []string{"hue", "saturation", "luminosity"}
-
 	for i, filename := range imageFiles {
-		fmt.Printf("Setting %s using %s...\n", componentNames[i], filename)
+		componentName := componentNames[i]
+		fmt.Printf("Setting %s using %s...\n", componentName, filename)
 		f, e = os.Open(filename)
 		if e != nil {
 			return nil, fmt.Errorf("Failed opening file %s: %s", filename, e)
@@ -253,7 +229,11 @@ func combineImages(imageFiles []string, adjustHue float64) (image.Image,
 			f.Close()
 			return nil, fmt.Errorf("Failed decoding image %s: %s", filename, e)
 		}
-		combined.SetComponent(pic, setterFunctions[i])
+		e = combined.SetComponent(pic, i)
+		if e != nil {
+			f.Close()
+			return nil, fmt.Errorf("Failed setting %s: %s", componentName, e)
+		}
 		pic = nil
 		f.Close()
 	}
