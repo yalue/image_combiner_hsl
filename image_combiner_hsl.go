@@ -126,7 +126,7 @@ func (h *HSLImage) HSLPixel(x, y int) HSLColor {
 	if (x < 0) || (y < 0) || (x >= h.w) || (y >= h.h) {
 		return HSLColor([]uint16{0, 0, 0})
 	}
-	i := y*h.w + x
+	i := 3 * (y*h.w + x)
 	return HSLColor(h.pixels[i : i+3])
 }
 
