@@ -282,6 +282,7 @@ func run() int {
 	options := jpeg.Options{
 		Quality: 100,
 	}
+	fmt.Printf("Writing combined image to %s\n", oName)
 	e = jpeg.Encode(outputFile, outputImage, &options)
 	if e != nil {
 		fmt.Printf("Failed creating output JPEG image: %s\n", e)
